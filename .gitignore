@@ -130,3 +130,5 @@ dmypy.json
 app_ambgeo.py
 app_nasa_power.py
 function_gee_ambgeo.py
+temp/
+.vscode/

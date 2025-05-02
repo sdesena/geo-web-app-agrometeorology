@@ -53,15 +53,3 @@ def get_municipios(estado):
     municipios_estado = municipios.filter(ee.Filter.eq("estado", estado))
     lista_municipios = municipios_estado.aggregate_array("nome").getInfo()
     return sorted(lista_municipios)
-
-# Sidebar para seleção de estado e município
-st.sidebar.header("Seleção de Região")
-estados = get_estados()
-estado_selecionado = st.sidebar.selectbox("Escolha o Estado", estados)
-
-if estado_selecionado:
-    municipios = get_municipios(estado_selecionado)
-    municipio_selecionado = st.sidebar.selectbox("Escolha o Município", municipios)
-    
-    st.write(f"### Estado Selecionado: {estado_selecionado}")
-    st.write(f"### Município Selecionado: {municipio_selecionado}")

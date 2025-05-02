@@ -26,3 +26,9 @@ Este repositório contém um aplicativo desenvolvido em Python para análise e m
 1. Clone este repositório:
    ```bash
    git clone https://github.com/<seu-usuario>/web-gis-applications.git
+
+2. Instale as dependências:
+pip install -r requirements.txt
+
+3. Execute o aplicativo:
+streamlit run geo_web_app.py
