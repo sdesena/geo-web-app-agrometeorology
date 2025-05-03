@@ -90,7 +90,10 @@ Ideal para profissionais e pesquisadores das áreas de **agrometeorologia**, **a
    Veja estatísticas como média, mínimo, máximo e desvio padrão.  
 
 ---
-         
+
+Todos os direitos reservados ao autor do aplicativo.
+
+---          
 
 """)
 
