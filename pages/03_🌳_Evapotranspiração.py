@@ -6,6 +6,8 @@ import streamlit as st              # Framework principal do app (interface web 
 import pandas as pd          # Manipulação de tabelas e dataframes            
 import plotly.graph_objects as go  # Usado para gráficos avançados (ex: série temporal, indicadores)
 import plotly.express as px  # Gráficos simples e rápidos)
+import json                 # Manipulação de arquivos JSON (ex: credenciais do GEE)
+
 
 #%%
 # Configuração da página
@@ -40,11 +42,19 @@ O balanço hídrico (precipitação menos evapotranspiração) indica períodos 
 
 
 # Inicializar Google Earth Engine
-try:
-    ee.Initialize()
-except Exception as e:
-    ee.Authenticate()
-    ee.Initialize()
+# Autenticação do Google Earth Engine para deploy (conta de serviço)
+if "GEE_CREDENTIALS_JSON" in st.secrets:
+    # Caso você tenha colocado o JSON inteiro no secrets
+    service_account_info = json.loads(st.secrets["GEE_CREDENTIALS_JSON"])
+    credentials = ee.ServiceAccountCredentials(service_account_info["client_email"], key_data=service_account_info)
+    ee.Initialize(credentials)
+else:
+    # Fallback para autenticação local (útil para desenvolvimento local)
+    try:
+        ee.Initialize()
+    except Exception as e:
+        ee.Authenticate()
+        ee.Initialize()
 
 # Inicializa um mapa apenas para garantir autenticação do Earth Engine
 auth_map = geemap.Map()

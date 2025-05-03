@@ -5,7 +5,7 @@ from datetime import datetime       # Utilizado para manipular datas (seleção 
 import streamlit as st              # Framework principal do app (interface web interativa)
 import plotly.express as px  # Gráficos simples e rápidos)
 import pandas as pd          # Manipulação de tabelas e dataframes                 # Pausa no processamento (ex: spinner de carregamento)
-
+import json
 
 #%%
 # Configuração da página
@@ -39,11 +39,19 @@ A temperatura média é um dos principais indicadores climáticos, fundamental p
 
 
 # Inicializar Google Earth Engine
-try:
-    ee.Initialize()
-except Exception as e:
-    ee.Authenticate()
-    ee.Initialize()
+# Autenticação do Google Earth Engine para deploy (conta de serviço)
+if "GEE_CREDENTIALS_JSON" in st.secrets:
+    # Caso você tenha colocado o JSON inteiro no secrets
+    service_account_info = json.loads(st.secrets["GEE_CREDENTIALS_JSON"])
+    credentials = ee.ServiceAccountCredentials(service_account_info["client_email"], key_data=service_account_info)
+    ee.Initialize(credentials)
+else:
+    # Fallback para autenticação local (útil para desenvolvimento local)
+    try:
+        ee.Initialize()
+    except Exception as e:
+        ee.Authenticate()
+        ee.Initialize()
 
 
 # Inicializa um mapa apenas para garantir autenticação do Earth Engine
