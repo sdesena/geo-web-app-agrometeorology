@@ -44,8 +44,12 @@ A análise detalhada da precipitação auxilia na compreensão de padrões sazon
 
 
 # Inicializar Google Earth Engine
-ee.Authenticate()
-ee.Initialize()
+try:
+    ee.Initialize()
+except Exception as e:
+    ee.Authenticate()
+    ee.Initialize()
+
 
 # Inicializa um mapa apenas para garantir autenticação do Earth Engine
 auth_map = geemap.Map()
@@ -55,12 +59,14 @@ ESTADOS_ASSET = "projects/ee-sandrosenamachado/assets/BR_UF_2023"
 MUNICIPIOS_ASSET = "projects/ee-sandrosenamachado/assets/BR_Municipios_2023"
 
 # Função para obter a lista de estados
+@st.cache_data
 def get_estados():
     estados = ee.FeatureCollection(ESTADOS_ASSET)
     lista_estados = estados.aggregate_array("NM_UF").getInfo()
     return sorted(lista_estados)
 
 # Função para obter municípios com base no estado selecionado
+@st.cache_data
 def get_municipios(estado):
     municipios = ee.FeatureCollection(MUNICIPIOS_ASSET)
     municipios_estado = municipios.filter(ee.Filter.eq("NM_UF", estado))
@@ -82,187 +88,148 @@ if estado_selecionado:
 
 # Adicionar campos de datas iniciais e finais na barra lateral
 st.sidebar.header("Seleção de Período")
+st.sidebar.markdown("Defina o intervalo de datas para a análise.")
+
 start_date = st.sidebar.date_input("📅 Data inicial", datetime(2010, 1, 1))
 end_date   = st.sidebar.date_input("📅 Data final", datetime(2020, 12, 31))
 run_analysis = st.sidebar.button("Executar Análise")
 
-
+# Verifica se a data inicial é anterior à data final
+if start_date >= end_date:
+    st.error("A data inicial deve ser anterior à data final.")
+    st.stop()
 
 # Verifica se o município foi selecionado
 if not municipio_selecionado:
     st.error("Selecione um município para prosseguir.")
     st.stop()
 
-# Definir a ROI como a geometria do município selecionado
-roi_fc = ee.FeatureCollection(MUNICIPIOS_ASSET) \
-            .filter(ee.Filter.eq("NM_UF", estado_selecionado)) \
-            .filter(ee.Filter.eq("NM_MUN", municipio_selecionado))
-roi = roi_fc.geometry()
+if run_analysis:
+    # Definir a ROI como a geometria do município selecionado
+    with st.spinner("Carregando geometria do município..."):
+        roi_fc = ee.FeatureCollection(MUNICIPIOS_ASSET) \
+                    .filter(ee.Filter.eq("NM_UF", estado_selecionado)) \
+                    .filter(ee.Filter.eq("NM_MUN", municipio_selecionado))
+        roi = roi_fc.geometry()
 
+    # Visualização da Região de Interesse
+    with st.spinner("Renderizando mapa da região de interesse..."):
+        m = geemap.Map(height=600)
+        m.centerObject(roi, 8)
+        m.setOptions("HYBRID")
+        m.addLayer(roi, {}, "Região de Interesse")
+        m.to_streamlit()
 
+    # Extraindo os anos do período selecionado
+    start_year = start_date.year
+    end_year = end_date.year
+    years = list(range(start_year, end_year + 1))
+    months = list(range(1, 13))
 
-# ====================================================
-# Visuazalização da Região de Interesse (ROI) no mapa
-# ====================================================
-if roi is not None and not st.session_state.get("analysis_done", False):
-    st.subheader("Visualização da Região de Interesse")
+    # Carregar o conjunto de dados CHIRPS (precipitação diária)
+    with st.spinner("Carregando dados de precipitação..."):
+        chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY") \
+            .select("precipitation") \
+            .filterDate(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")) \
+            .filterBounds(roi)
 
-    # Cria o mapa GEEMAP com a ROI
-    m = geemap.Map(height=600)
-    m.centerObject(roi, 8)
-    m.setOptions("HYBRID")
-    m.addLayer(roi, {}, "Região de Interesse")
+    # Cálculo da precipitação anual
+    with st.spinner("Calculando precipitação anual..."):
+        def calc_annual_precip(year):
+            year = ee.Number(year)
+            start = ee.Date.fromYMD(year, 1, 1)
+            end = ee.Date.fromYMD(year, 12, 31)
+            precip_sum = chirps.filterDate(start, end).sum().clip(roi)
+            return precip_sum.set('year', year).set('system:time_start', start.millis())
+        annual_precip_ic = ee.ImageCollection(ee.List(years).map(calc_annual_precip))
 
-    # Renderiza o mapa no Streamlit
-    m.to_streamlit()
+    # Ajuste automático do histograma para o mapa
+    def get_viz_params(image):
+        stats = image.reduceRegion(
+            reducer=ee.Reducer.minMax(),
+            geometry=roi,
+            scale=1000,
+            maxPixels=1e9
+        )
+        min_val = stats.get("precipitation_min").getInfo()
+        max_val = stats.get("precipitation_max").getInfo()
+        return {"min": min_val, "max": max_val, "palette": ['#ffffff', '#ff3333', '#fff581', '#33ecff', '#6f5eff', '#171cb1']}
 
+    # Mapa com precipitação anual
+    st.header("Mapa de Precipitação Anual")
+    year_for_map = st.selectbox("Selecione o ano para o mapa", years)
+    annual_img = ee.Image(annual_precip_ic.filter(ee.Filter.eq('year', year_for_map)).first())
+    viz_params = get_viz_params(annual_img)
+    with st.spinner("Renderizando mapa de precipitação anual..."):
+        m = geemap.Map()
+        m.centerObject(roi, 8)
+        m.addLayer(annual_img, viz_params, f"Precipitação Anual {year_for_map}")
+        st.write("### Visualização no Mapa")
+        m.to_streamlit(height=500)
 
+    # Geração dos gráficos com Plotly
+    st.header("Análise Gráfica da Precipitação")
 
-# Extraindo os anos do período selecionado
-start_year = start_date.year
-end_year = end_date.year
-years = list(range(start_year, end_year + 1))
-months = list(range(1, 13))
+    def get_region_mean(image, band, scale=10000):
+        stat = image.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=roi,
+            scale=scale,
+            maxPixels=1e9
+        )
+        return stat.get(band)
 
-# Carregar o conjunto de dados CHIRPS (precipitação diária)
-chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY") \
-    .select("precipitation") \
-    .filterDate(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")) \
-    .filterBounds(roi)
+    # Gráfico anual
+    with st.spinner("Gerando gráfico anual..."):
+        annual_data = []
+        for y in years:
+            img = ee.Image(annual_precip_ic.filter(ee.Filter.eq('year', y)).first())
+            mean_val = get_region_mean(img, "precipitation")
+            mean_val = ee.Number(mean_val).getInfo() if mean_val else None
+            annual_data.append({"year": y, "precip": mean_val})
+        df_annual = pd.DataFrame(annual_data)
+        fig_annual = px.bar(df_annual, x="year", y="precip",
+                            labels={"year": "Ano", "precip": "Precipitação (mm)"},
+                            title="Precipitação Acumulada Anual")
+        st.plotly_chart(fig_annual, use_container_width=True)
 
-# ----------------------------
-# Cálculo da precipitação anual
-# ----------------------------
-def calc_annual_precip(year):
-    year = ee.Number(year)
-    start = ee.Date.fromYMD(year, 1, 1)
-    end = ee.Date.fromYMD(year, 12, 31)
-    precip_sum = chirps.filterDate(start, end).sum().clip(roi)
-    return precip_sum.set('year', year).set('system:time_start', start.millis())
+    # Gráfico mensal
+    with st.spinner("Gerando gráfico mensal..."):
+        monthly_data = []
+        for y in years:
+            for m in months:
+                start = ee.Date.fromYMD(y, m, 1)
+                end = start.advance(1, 'month')
+                img = chirps.filterDate(start, end).sum().clip(roi)
+                mean_val = get_region_mean(img, "precipitation")
+                mean_val = ee.Number(mean_val).getInfo() if mean_val else None
+                monthly_data.append({"year": y, "month": m, "precip": mean_val})
+        df_monthly = pd.DataFrame(monthly_data)
+        df_monthly_avg = df_monthly.groupby("month").mean().reset_index()
+        fig_monthly = px.bar(df_monthly_avg, x="month", y="precip",
+                             labels={"month": "Mês", "precip": "Precipitação Média (mm)"},
+                             title="Precipitação Média Mensal")
+        st.plotly_chart(fig_monthly, use_container_width=True)
 
-annual_precip_ic = ee.ImageCollection(ee.List(years).map(calc_annual_precip))
+    # Série temporal mensal com média móvel
+    with st.spinner("Gerando série temporal mensal..."):
+        df_monthly['date'] = pd.to_datetime(df_monthly['year'].astype(str) + '-' + df_monthly['month'].astype(str) + '-15')
+        df_monthly = df_monthly.sort_values('date')
+        df_monthly['precip_rolling'] = df_monthly['precip'].rolling(window=3, center=True).mean()
+        fig_ts = px.line(df_monthly, x='date', y='precip',
+                         labels={'date': 'Data', 'precip': 'Precipitação (mm)'},
+                         title='Série Temporal Mensal da Precipitação')
+        fig_ts.add_scatter(x=df_monthly['date'], y=df_monthly['precip_rolling'],
+                           mode='lines', name='Média Móvel (3 meses)', line=dict(color='black', width=3, dash='dash'))
+        st.plotly_chart(fig_ts, use_container_width=True)
 
-# ----------------------------
-# Ajuste automático do histograma para o mapa
-# ----------------------------
-def get_viz_params(image):
-    stats = image.reduceRegion(
-        reducer=ee.Reducer.minMax(),
-        geometry=roi,
-        scale=1000,
-        maxPixels=1e9
-    )
-    min_val = stats.get("precipitation_min").getInfo()
-    max_val = stats.get("precipitation_max").getInfo()
-    return {"min": min_val, "max": max_val, "palette": ['#ffffff', '#ff3333', '#fff581', '#33ecff', '#6f5eff', '#171cb1']}
-
-# ----------------------------
-# Mapa com precipitação anual
-# ----------------------------
-st.header("Mapa de Precipitação Anual")
-# Permite selecionar o ano para visualizar no mapa
-year_for_map = st.selectbox("Selecione o ano para o mapa", years)
-# Filtra a imagem anual do ano escolhido
-annual_img = ee.Image(annual_precip_ic.filter(ee.Filter.eq('year', year_for_map)).first())
-
-# Obter parâmetros de visualização ajustados
-viz_params = get_viz_params(annual_img)
-
-# Renderizar o mapa
-m = geemap.Map()
-m.centerObject(roi, 8)
-m.addLayer(annual_img, viz_params, f"Precipitação Anual {year_for_map}")
-st.write("### Visualização no Mapa")
-m.to_streamlit(height=500)
-
-# ----------------------------
-# Geração dos gráficos com Plotly
-# ----------------------------
-st.header("Análise Gráfica da Precipitação")
-
-# Função para reduzir a imagem e obter o valor médio na ROI
-def get_region_mean(image, band, scale=10000):
-    stat = image.reduceRegion(
-        reducer=ee.Reducer.mean(),
-        geometry=roi,
-        scale=scale,
-        maxPixels=1e9
-    )
-    return stat.get(band)
-
-# Dados anuais: calcular média para cada ano
-annual_data = []
-for y in years:
-    img = ee.Image(annual_precip_ic.filter(ee.Filter.eq('year', y)).first())
-    mean_val = get_region_mean(img, "precipitation")
-    # Usamos getInfo() para trazer o valor para o Python
-    mean_val = ee.Number(mean_val).getInfo() if mean_val else None
-    annual_data.append({"year": y, "precip": mean_val})
-
-df_annual = pd.DataFrame(annual_data)
-
-# Gráfico anual com Plotly (barras)
-fig_annual = px.bar(df_annual, x="year", y="precip",
-                    labels={"year": "Ano", "precip": "Precipitação (mm)"},
-                    title="Precipitação Acumulada Anual")
-st.plotly_chart(fig_annual, use_container_width=True)
-
-# ----------------------------
-# Dados mensais: calcular média para cada mês
-# ----------------------------
-monthly_data = []
-for y in years:
-    for m in months:
-        start = ee.Date.fromYMD(y, m, 1)
-        end = start.advance(1, 'month')
-        img = chirps.filterDate(start, end).sum().clip(roi)
-        mean_val = get_region_mean(img, "precipitation")
-        mean_val = ee.Number(mean_val).getInfo() if mean_val else None
-        monthly_data.append({"year": y, "month": m, "precip": mean_val})
-
-df_monthly = pd.DataFrame(monthly_data)
-
-# Agrupar por mês para calcular a média de precipitação mensal
-df_monthly_avg = df_monthly.groupby("month").mean().reset_index()
-
-# Gráfico mensal com Plotly (climograma)
-fig_monthly = px.bar(df_monthly_avg, x="month", y="precip",
-                     labels={"month": "Mês", "precip": "Precipitação Média (mm)"},
-                     title="Precipitação Média Mensal")
-st.plotly_chart(fig_monthly, use_container_width=True)
-
-# ----------------------------
-# Média móvel de 3 meses (ajuste o window se quiser)
-# ----------------------------
-# Série temporal mensal completa (sem agrupar)
-df_monthly['date'] = pd.to_datetime(df_monthly['year'].astype(str) + '-' + df_monthly['month'].astype(str) + '-15')
-df_monthly = df_monthly.sort_values('date')
-
-# Média móvel de 3 meses (ajuste o window se quiser)
-df_monthly['precip_rolling'] = df_monthly['precip'].rolling(window=3, center=True).mean()
-
-# Gráfico de série temporal mensal com média móvel
-fig_ts = px.line(df_monthly, x='date', y='precip',
-                 labels={'date': 'Data', 'precip': 'Precipitação (mm)'},
-                 title='Série Temporal Mensal da Precipitação')
-fig_ts.add_scatter(x=df_monthly['date'], y=df_monthly['precip_rolling'],
-                   mode='lines', name='Média Móvel (3 meses)', line=dict(color='black', width=3, dash='dash'))
-
-st.plotly_chart(fig_ts, use_container_width=True)
-
-# ----------------------------
-# Estatísticas descritivas da precipitação anual
-# ----------------------------
-
-st.subheader("###Estatísticas Descritivas da Precipitação Anual")
-st.dataframe(df_annual.describe().transpose(), use_container_width=True)
-
-# Complemento: mostrar ano de máximo e mínimo
-max_row = df_annual.loc[df_annual['precip'].idxmax()]
-min_row = df_annual.loc[df_annual['precip'].idxmin()]
-st.markdown(f"**Ano mais chuvoso:** {int(max_row['year'])} ({max_row['precip']:.1f} mm)")
-st.markdown(f"**Ano mais seco:** {int(min_row['year'])} ({min_row['precip']:.1f} mm)")
-
-# Complemento visual: boxplot da precipitação anual
-fig_box = px.box(df_annual, y="precip", points="all", title="Distribuição da Precipitação Anual")
-st.plotly_chart(fig_box, use_container_width=True)
+    # Estatísticas descritivas
+    with st.spinner("Calculando estatísticas descritivas..."):
+        st.subheader("###Estatísticas Descritivas da Precipitação Anual")
+        st.dataframe(df_annual.describe().transpose(), use_container_width=True)
+        max_row = df_annual.loc[df_annual['precip'].idxmax()]
+        min_row = df_annual.loc[df_annual['precip'].idxmin()]
+        st.markdown(f"**Ano mais chuvoso:** {int(max_row['year'])} ({max_row['precip']:.1f} mm)")
+        st.markdown(f"**Ano mais seco:** {int(min_row['year'])} ({min_row['precip']:.1f} mm)")
+        fig_box = px.box(df_annual, y="precip", points="all", title="Distribuição da Precipitação Anual")
+        st.plotly_chart(fig_box, use_container_width=True)

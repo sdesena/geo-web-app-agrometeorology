@@ -5,7 +5,7 @@ from datetime import datetime       # Utilizado para manipular datas (seleção 
 import streamlit as st              # Framework principal do app (interface web interativa)
 import pandas as pd          # Manipulação de tabelas e dataframes            
 import plotly.graph_objects as go  # Usado para gráficos avançados (ex: série temporal, indicadores)
-
+import plotly.express as px  # Gráficos simples e rápidos)
 
 #%%
 # Configuração da página
@@ -40,8 +40,11 @@ O balanço hídrico (precipitação menos evapotranspiração) indica períodos 
 
 
 # Inicializar Google Earth Engine
-ee.Authenticate()
-ee.Initialize()
+try:
+    ee.Initialize()
+except Exception as e:
+    ee.Authenticate()
+    ee.Initialize()
 
 # Inicializa um mapa apenas para garantir autenticação do Earth Engine
 auth_map = geemap.Map()
@@ -82,150 +85,161 @@ start_date = st.sidebar.date_input("📅 Data inicial", datetime(2010, 1, 1))
 end_date   = st.sidebar.date_input("📅 Data final", datetime(2020, 12, 31))
 run_analysis = st.sidebar.button("Executar Análise")
 
-
+# Verifica se a data inicial é anterior à data final
+if start_date >= end_date:
+    st.error("A data inicial deve ser anterior à data final.")
+    st.stop()
 
 # Verifica se o município foi selecionado
 if not municipio_selecionado:
     st.error("Selecione um município para prosseguir.")
     st.stop()
 
-# Definir a ROI como a geometria do município selecionado
-roi_fc = ee.FeatureCollection(MUNICIPIOS_ASSET) \
-            .filter(ee.Filter.eq("NM_UF", estado_selecionado)) \
-            .filter(ee.Filter.eq("NM_MUN", municipio_selecionado))
-roi = roi_fc.geometry()
+if run_analysis:
+
+    # Definir a ROI como a geometria do município selecionado
+    with st.spinner("Carregando geometria do município..."):
+        roi_fc = ee.FeatureCollection(MUNICIPIOS_ASSET) \
+                    .filter(ee.Filter.eq("NM_UF", estado_selecionado)) \
+                    .filter(ee.Filter.eq("NM_MUN", municipio_selecionado))
+        roi = roi_fc.geometry()
 
 
 # ====================================================
 # Visuazalização da Região de Interesse (ROI) no mapa
 # ====================================================
-if roi is not None and not st.session_state.get("analysis_done", False):
-    st.subheader("Visualização da Região de Interesse")
 
-    # Cria o mapa GEEMAP com a ROI
-    m = geemap.Map(height=600)
-    m.centerObject(roi, 8)
-    m.setOptions("HYBRID")
-    m.addLayer(roi, {}, "Região de Interesse")
+    with st.spinner("Renderizando mapa da região de interesse..."):
 
-    # Renderiza o mapa no Streamlit
-    m.to_streamlit()
+        # Cria o mapa GEEMAP com a ROI
+        m = geemap.Map(height=600)
+        m.centerObject(roi, 8)
+        m.setOptions("HYBRID")
+        m.addLayer(roi, {}, "Região de Interesse")
+
+        # Renderiza o mapa no Streamlit
+        m.to_streamlit()
 
 
+# Só executa as análises após clicar no botão
+if run_analysis and roi is not None:
 
-# Extraindo os anos do período selecionado
-start_year = start_date.year
-end_year = end_date.year
-years = list(range(start_year, end_year + 1))
-months = list(range(1, 13))
+    # Extraindo os anos do período selecionado
+    start_year = start_date.year
+    end_year = end_date.year
+    years = list(range(start_year, end_year + 1))
+    months = list(range(1, 13))
 
-# Executa o processamento somente se ROI foi definida e botão clicado
-if roi is not None and run_analysis:
 
+    with st.spinner("Carregando dados de precipitação e evapotranspiração..."):
     ## Abrindo nossos dados
-    chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/PENTAD").select('precipitation')
+        chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/PENTAD").select('precipitation')
 
-    # Definindo a função de escala
-    def scale_mod16(image):
-        return image.multiply(0.1).copyProperties(image, image.propertyNames())
+        # Definindo a função de escala
+        def scale_mod16(image):
+            return image.multiply(0.1).copyProperties(image, image.propertyNames())
 
-    mod16 = ee.ImageCollection("MODIS/061/MOD16A2GF").map(scale_mod16 ).select('ET')
+        mod16 = ee.ImageCollection("MODIS/061/MOD16A2GF").map(scale_mod16 ).select('ET')
 
-    ## Definição de período
-    year_start = start_date.year
-    year_end = end_date.year
+    
+    # Filtrando a coleção de precipitação e evapotranspiração para o período selecionado
+    with st.spinner("Processando séries temporais mensais..."):
+        # Definição de período
+        year_start = start_date.year
+        year_end = end_date.year
 
-    # Parâmetros para padronização temporal
-    startDate = ee.Date.fromYMD(year_start, 1, 1)
-    endDate = ee.Date.fromYMD(year_end, 1, 1)  # Avança o ano inicial mais x
+        # Parâmetros para padronização temporal
+        startDate = ee.Date.fromYMD(year_start, 1, 1)
+        endDate = ee.Date.fromYMD(year_end, 1, 1)  # Avança o ano inicial mais x
 
-    # Filtrar a coleção a partir do período definido
-    yearFiltered = chirps.filter(ee.Filter.date(startDate, endDate)).filterBounds(roi)
-    # print('Numero de imagens',yearFiltered.size().getInfo())
+        # Filtrar a coleção a partir do período definido
+        yearFiltered = chirps.filter(ee.Filter.date(startDate, endDate)).filterBounds(roi)
+        # print('Numero de imagens',yearFiltered.size().getInfo())
 
-    # Lista de meses e anos
-    months = ee.List.sequence(1, 12)
-    years = ee.List.sequence(year_start, (year_end - 1))
+        # Lista de meses e anos
+        months = ee.List.sequence(1, 12)
+        years = ee.List.sequence(year_start, (year_end - 1))
 
-    # Função para criar imagens mensais
-    def createYearly(year):
+        # Função para criar imagens mensais
+        def createYearly(year):
 
-        def createMonthlyImage(month):
-            return yearFiltered \
-                .filter(ee.Filter.calendarRange(year, year, 'year')) \
-                .filter(ee.Filter.calendarRange(month, month, 'month')) \
-                .sum() \
-                .clip(roi) \
-                .set('year', year) \
-                .set('month', month) \
-                .set('data', ee.Date.fromYMD(year, month, 1).format()) \
-                .set('system:time_start', ee.Date.fromYMD(year, month, 1))
+            def createMonthlyImage(month):
+                return yearFiltered \
+                    .filter(ee.Filter.calendarRange(year, year, 'year')) \
+                    .filter(ee.Filter.calendarRange(month, month, 'month')) \
+                    .sum() \
+                    .clip(roi) \
+                    .set('year', year) \
+                    .set('month', month) \
+                    .set('data', ee.Date.fromYMD(year, month, 1).format()) \
+                    .set('system:time_start', ee.Date.fromYMD(year, month, 1))
 
-        return months.map(createMonthlyImage)
+            return months.map(createMonthlyImage)
 
-    # Aplicar função mês/ano nas coleções
-    chirps_monthlyImages = ee.ImageCollection.fromImages(years.map(createYearly).flatten())
-    yearFiltered = mod16.filter(ee.Filter.date(startDate, endDate)).filterBounds(roi)
-    mod16_monthlyImages = ee.ImageCollection.fromImages(years.map(createYearly).flatten())
+        # Aplicar função mês/ano nas coleções
+        chirps_monthlyImages = ee.ImageCollection.fromImages(years.map(createYearly).flatten())
+        yearFiltered = mod16.filter(ee.Filter.date(startDate, endDate)).filterBounds(roi)
+        mod16_monthlyImages = ee.ImageCollection.fromImages(years.map(createYearly).flatten())
 
-    # Verificar número de bandas
-    def addNumBands(image):
-        num_bands = image.bandNames().size()
-        return image.set('nbands', num_bands)
+        # Verificar número de bandas
+        def addNumBands(image):
+            num_bands = image.bandNames().size()
+            return image.set('nbands', num_bands)
 
-    # Aplica a função e filtra imagens com bandas válidas
-    mod16_monthlyImages = mod16_monthlyImages.map(addNumBands).filter(ee.Filter.gt('nbands', 0))
-    chirps_monthlyImages = chirps_monthlyImages.map(addNumBands).filter(ee.Filter.gt('nbands', 0))
+        # Aplica a função e filtra imagens com bandas válidas
+        mod16_monthlyImages = mod16_monthlyImages.map(addNumBands).filter(ee.Filter.gt('nbands', 0))
+        chirps_monthlyImages = chirps_monthlyImages.map(addNumBands).filter(ee.Filter.gt('nbands', 0))
 
-    ## Cálculo do Balanço Hídrico
-    def calculateWaterBalance(image):
-        P = image.select('precipitation')
-        ET = image.select('ET')
-        waterBalance = P.subtract(ET)
-        return image.addBands([waterBalance.rename('water_balance')])
+        ## Cálculo do Balanço Hídrico
+        def calculateWaterBalance(image):
+            P = image.select('precipitation')
+            ET = image.select('ET')
+            waterBalance = P.subtract(ET)
+            return image.addBands([waterBalance.rename('water_balance')])
 
-    # Adicionar bandas de precipitação e evapotranspiração às imagens CHIRPS
-    def addETBands(image):
-        ET_image = mod16_monthlyImages \
-            .filter(ee.Filter.eq('year', image.get('year'))) \
-            .filter(ee.Filter.eq('month', image.get('month'))) \
-            .first()
-        return image.addBands([ET_image.rename('ET')])
+        # Adicionar bandas de precipitação e evapotranspiração às imagens CHIRPS
+        def addETBands(image):
+            ET_image = mod16_monthlyImages \
+                .filter(ee.Filter.eq('year', image.get('year'))) \
+                .filter(ee.Filter.eq('month', image.get('month'))) \
+                .first()
+            return image.addBands([ET_image.rename('ET')])
 
-    # Aplica as funções
-    waterBalanceWithBands = chirps_monthlyImages.map(addETBands)
-    waterBalanceResult = waterBalanceWithBands.map(calculateWaterBalance)
+        # Aplica as funções
+        waterBalanceWithBands = chirps_monthlyImages.map(addETBands)
+        waterBalanceResult = waterBalanceWithBands.map(calculateWaterBalance)
 
-    ## Função para extrair estatísticas das imagens
-    def stats(image):
-        reduce = image.reduceRegions(**{
-            'collection': roi,
-            'reducer': ee.Reducer.mean(),
-            'scale': 5000
-        })
+        ## Função para extrair estatísticas das imagens
+        def stats(image):
+            reduce = image.reduceRegions(**{
+                'collection': roi,
+                'reducer': ee.Reducer.mean(),
+                'scale': 5000
+            })
 
-        reduce = reduce \
-            .map(lambda f: f.set({'data': image.get('data')})) \
-            .map(lambda f: f.set({'year': image.get('year')})) \
-            .map(lambda f: f.set({'month': image.get('month')}))
+            reduce = reduce \
+                .map(lambda f: f.set({'data': image.get('data')})) \
+                .map(lambda f: f.set({'year': image.get('year')})) \
+                .map(lambda f: f.set({'month': image.get('month')}))
 
-        return reduce.copyProperties(image, image.propertyNames())
+            return reduce.copyProperties(image, image.propertyNames())
 
-    # Converter para df
-    col_bands = waterBalanceResult  # .select(bands)
+        # Converter para df
+        col_bands = waterBalanceResult  # .select(bands)
 
-    # Aplicar estatísticas
-    stats_reduce = col_bands.map(stats) \
-        .flatten() \
-        .sort('data', True)
-   
+        # Aplicar estatísticas
+        stats_reduce = col_bands.map(stats) \
+            .flatten() \
+            .sort('data', True)
+    
 
-    df = geemap.ee_to_df(stats_reduce)
+        df = geemap.ee_to_df(stats_reduce)
     
 
     # ===================== ANÁLISE DE EVAPOTRANSPIRAÇÃO E BALANÇO HÍDRICO =====================
-
+with st.spinner("Gerando gráficos e análises..."):
     st.subheader("Análise Gráfica da Evapotranspiração e Balanço Hídrico")
+
 
     # Organizar datas
     df['data'] = pd.to_datetime(df['data'])
