@@ -43,7 +43,7 @@ A temperatura média é um dos principais indicadores climáticos, fundamental p
 if "GEE_CREDENTIALS_JSON" in st.secrets:
     # Caso você tenha colocado o JSON inteiro no secrets
     service_account_info = json.loads(st.secrets["GEE_CREDENTIALS_JSON"])
-    credentials = ee.ServiceAccountCredentials(service_account_info["client_id"], key_data=service_account_info)
+    credentials = ee.ServiceAccountCredentials(service_account_info["client_email"], key_data=service_account_info)
     ee.Initialize(credentials)
 else:
     # Fallback para autenticação local (útil para desenvolvimento local)
