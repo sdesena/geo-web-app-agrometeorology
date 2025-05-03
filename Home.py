@@ -2,7 +2,7 @@ import streamlit as st
 
 st.set_page_config(layout="wide")
 
-logo = r"C:\Users\sandr\Documents\GitHub\web-gis-applications\assets\logo_geodata_lab_2.png"
+logo = 'assets/logo_geodata_lab_2.png'
 
 # Adicionando o logo do GeoData Lab na barra lateral
 st.sidebar.image(logo)
