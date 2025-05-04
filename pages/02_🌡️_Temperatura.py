@@ -41,9 +41,10 @@ A temperatura média é um dos principais indicadores climáticos, fundamental p
 # Inicializar Google Earth Engine
 # Autenticação do Google Earth Engine para deploy (conta de serviço)
 if "GEE_CREDENTIALS_JSON" in st.secrets:
-    # Caso você tenha colocado o JSON inteiro no secrets
-    service_account_info = json.loads(st.secrets["GEE_CREDENTIALS_JSON"])
-    credentials = ee.ServiceAccountCredentials(service_account_info["client_email"], key_data=service_account_info)
+    credentials = ee.ServiceAccountCredentials(
+        json.loads(st.secrets["GEE_CREDENTIALS_JSON"])["client_email"],
+        key_data=st.secrets["GEE_CREDENTIALS_JSON"]
+    )
     ee.Initialize(credentials)
 else:
     # Fallback para autenticação local (útil para desenvolvimento local)
@@ -52,7 +53,6 @@ else:
     except Exception as e:
         ee.Authenticate()
         ee.Initialize()
-
 
 # Inicializa um mapa apenas para garantir autenticação do Earth Engine
 auth_map = geemap.Map()
