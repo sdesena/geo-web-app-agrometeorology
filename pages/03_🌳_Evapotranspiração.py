@@ -56,7 +56,7 @@ else:
     except Exception as e:
         ee.Authenticate()
         ee.Initialize()
-        
+
 # Inicializa um mapa apenas para garantir autenticação do Earth Engine
 auth_map = geemap.Map()
 
@@ -247,96 +247,96 @@ if run_analysis and roi is not None:
         df = geemap.ee_to_df(stats_reduce)
     
 
-    # ===================== ANÁLISE DE EVAPOTRANSPIRAÇÃO E BALANÇO HÍDRICO =====================
-with st.spinner("Gerando gráficos e análises..."):
-    st.subheader("Análise Gráfica da Evapotranspiração e Balanço Hídrico")
+        # ===================== ANÁLISE DE EVAPOTRANSPIRAÇÃO E BALANÇO HÍDRICO =====================
+    with st.spinner("Gerando gráficos e análises..."):
+        st.subheader("Análise Gráfica da Evapotranspiração e Balanço Hídrico")
 
 
-    # Organizar datas
-    df['data'] = pd.to_datetime(df['data'])
-    df = df.sort_values('data')
-    df['ano'] = df['data'].dt.year
-    df['mes'] = df['data'].dt.month
+        # Organizar datas
+        df['data'] = pd.to_datetime(df['data'])
+        df = df.sort_values('data')
+        df['ano'] = df['data'].dt.year
+        df['mes'] = df['data'].dt.month
 
 
-# ----------- ANÁLISE ANUAL -----------
-    annual_data = df.groupby('ano').agg({
-        'ET': 'mean',
-        'water_balance': 'mean'
-    }).reset_index()
+    # ----------- ANÁLISE ANUAL -----------
+        annual_data = df.groupby('ano').agg({
+            'ET': 'mean',
+            'water_balance': 'mean'
+        }).reset_index()
 
-    fig_annual = go.Figure()
-    fig_annual.add_trace(go.Bar(
-        x=annual_data['ano'], y=annual_data['ET'],
-        name='Evapotranspiração Média Anual', marker_color='#ff8800'
-    ))
-    fig_annual.add_trace(go.Bar(
-        x=annual_data['ano'], y=annual_data['water_balance'],
-        name='Balanço Hídrico Médio Anual', marker_color='#00bfff'
-    ))
-    fig_annual.update_layout(
-        barmode='group',
-        title='Evapotranspiração e Balanço Hídrico Médios Anuais',
-        xaxis_title='Ano', yaxis_title='Valor (mm/mês)'
-    )
-    st.plotly_chart(fig_annual, use_container_width=True)
+        fig_annual = go.Figure()
+        fig_annual.add_trace(go.Bar(
+            x=annual_data['ano'], y=annual_data['ET'],
+            name='Evapotranspiração Média Anual', marker_color='#ff8800'
+        ))
+        fig_annual.add_trace(go.Bar(
+            x=annual_data['ano'], y=annual_data['water_balance'],
+            name='Balanço Hídrico Médio Anual', marker_color='#00bfff'
+        ))
+        fig_annual.update_layout(
+            barmode='group',
+            title='Evapotranspiração e Balanço Hídrico Médios Anuais',
+            xaxis_title='Ano', yaxis_title='Valor (mm/mês)'
+        )
+        st.plotly_chart(fig_annual, use_container_width=True)
 
-    # ----------- ANÁLISE MENSAL (SAZONALIDADE) -----------
-    monthly_data = df.groupby('mes').agg({
-        'ET': 'mean',
-        'water_balance': 'mean'
-    }).reset_index()
+        # ----------- ANÁLISE MENSAL (SAZONALIDADE) -----------
+        monthly_data = df.groupby('mes').agg({
+            'ET': 'mean',
+            'water_balance': 'mean'
+        }).reset_index()
 
-    fig_monthly = go.Figure()
-    fig_monthly.add_trace(go.Bar(
-        x=monthly_data['mes'], y=monthly_data['ET'],
-        name='Evapotranspiração Média Mensal', marker_color='#ff8800'
-    ))
-    fig_monthly.add_trace(go.Bar(
-        x=monthly_data['mes'], y=monthly_data['water_balance'],
-        name='Balanço Hídrico Médio Mensal', marker_color='#00bfff'
-    ))
-    fig_monthly.update_layout(
-        barmode='group',
-        title='Evapotranspiração e Balanço Hídrico Médios Mensais',
-        xaxis_title='Mês', yaxis_title='Valor (mm/mês)'
-    )
-    st.plotly_chart(fig_monthly, use_container_width=True)
+        fig_monthly = go.Figure()
+        fig_monthly.add_trace(go.Bar(
+            x=monthly_data['mes'], y=monthly_data['ET'],
+            name='Evapotranspiração Média Mensal', marker_color='#ff8800'
+        ))
+        fig_monthly.add_trace(go.Bar(
+            x=monthly_data['mes'], y=monthly_data['water_balance'],
+            name='Balanço Hídrico Médio Mensal', marker_color='#00bfff'
+        ))
+        fig_monthly.update_layout(
+            barmode='group',
+            title='Evapotranspiração e Balanço Hídrico Médios Mensais',
+            xaxis_title='Mês', yaxis_title='Valor (mm/mês)'
+        )
+        st.plotly_chart(fig_monthly, use_container_width=True)
 
-    # ----------- SÉRIE TEMPORAL COM MÉDIA MÓVEL -----------
-    df['ET_rolling'] = df['ET'].rolling(window=3, center=True).mean()
-    df['wb_rolling'] = df['water_balance'].rolling(window=3, center=True).mean()
+        # ----------- SÉRIE TEMPORAL COM MÉDIA MÓVEL -----------
+        df['ET_rolling'] = df['ET'].rolling(window=3, center=True).mean()
+        df['wb_rolling'] = df['water_balance'].rolling(window=3, center=True).mean()
 
-    fig_ts = go.Figure()
-    fig_ts.add_trace(go.Scatter(
-        x=df['data'], y=df['ET'],
-        mode='lines', name='ET', line=dict(color='#ff8800', width=2)
-    ))
-    fig_ts.add_trace(go.Scatter(
-        x=df['data'], y=df['ET_rolling'],
-        mode='lines', name='ET (Média Móvel 3 meses)', line=dict(color='#ffbb33', width=3, dash='dash')
-    ))
-    fig_ts.add_trace(go.Scatter(
-        x=df['data'], y=df['water_balance'],
-        mode='lines', name='Balanço Hídrico', line=dict(color='#00bfff', width=2)
-    ))
-    fig_ts.add_trace(go.Scatter(
-        x=df['data'], y=df['wb_rolling'],
-        mode='lines', name='Balanço Hídrico (Média Móvel 3 meses)', line=dict(color='#005577', width=3, dash='dash')
-    ))
-    fig_ts.update_layout(
-        title='Série Temporal de Evapotranspiração e Balanço Hídrico',
-        xaxis_title='Data', yaxis_title='Valor (mm/mês)'
-    )
-    st.plotly_chart(fig_ts, use_container_width=True)
+        fig_ts = go.Figure()
+        fig_ts.add_trace(go.Scatter(
+            x=df['data'], y=df['ET'],
+            mode='lines', name='ET', line=dict(color='#ff8800', width=2)
+        ))
+        fig_ts.add_trace(go.Scatter(
+            x=df['data'], y=df['ET_rolling'],
+            mode='lines', name='ET (Média Móvel 3 meses)', line=dict(color='#ffbb33', width=3, dash='dash')
+        ))
+        fig_ts.add_trace(go.Scatter(
+            x=df['data'], y=df['water_balance'],
+            mode='lines', name='Balanço Hídrico', line=dict(color='#00bfff', width=2)
+        ))
+        fig_ts.add_trace(go.Scatter(
+            x=df['data'], y=df['wb_rolling'],
+            mode='lines', name='Balanço Hídrico (Média Móvel 3 meses)', line=dict(color='#005577', width=3, dash='dash')
+        ))
+        fig_ts.update_layout(
+            title='Série Temporal de Evapotranspiração e Balanço Hídrico',
+            xaxis_title='Data', yaxis_title='Valor (mm/mês)'
+        )
+        st.plotly_chart(fig_ts, use_container_width=True)
 
-    # ----------- ESTATÍSTICAS DESCRITIVAS -----------
-    st.subheader("Estatísticas Descritivas")
-    st.write("**Evapotranspiração (ET):**")
-    st.dataframe(df['ET'].describe().to_frame().T, use_container_width=True)
-    st.write("**Balanço Hídrico (P-ET):**")
-    st.dataframe(df['water_balance'].describe().to_frame().T, use_container_width=True)
+        # ----------- ESTATÍSTICAS DESCRITIVAS -----------
+        st.subheader("Estatísticas Descritivas")
+        st.write("**Evapotranspiração (ET):**")
+        st.dataframe(df['ET'].describe().to_frame().T, use_container_width=True)
+        st.write("**Balanço Hídrico (P-ET):**")
+        st.dataframe(df['water_balance'].describe().to_frame().T, use_container_width=True)
 
-    # ----------- TABELA INTERATIVA -----------
-    st.subheader("Tabela de Dados Mensais")
-    st.dataframe(df[['data', 'ET', 'water_balance']], use_container_width=True)
+        # ----------- TABELA INTERATIVA -----------
+        st.subheader("Tabela de Dados Mensais")
+        st.dataframe(df[['data', 'ET', 'water_balance']], use_container_width=True)
